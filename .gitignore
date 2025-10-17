@@ -1,0 +1,10 @@
+.DS_Store
+.idea/
+Output/
+*.zip
+*.rar
+__MACOSX/
+a.py
+Videos/
+Output_final/
+*.json
