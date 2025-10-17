@@ -9,7 +9,7 @@ from ctypes import wintypes
 from collections import OrderedDict
 
 
-LANG = "VI"
+LANG = "EN"
 
 
 TEXTS = {
@@ -18,7 +18,7 @@ TEXTS = {
         "segment": "🎮 Scene:",
         "role": "🎭 Character Archetype",
         "external_emotion": "🧝 External Expression",
-        "internal_emotion": "🧠 Internal Emotion",
+        "internal_emotion": "🧠 Internal Mood",
         "prev": "⬅ Previous",
         "next": "Next ➡",
         "goto_first": "⏩ Go to First Unvoted Sample",
@@ -50,14 +50,25 @@ def t(key):
 FONT_SIZE = 26
 IMG_SIZE = 350
 
-ROLE_CATEGORIES = {
+ROLE_CATEGORIES_VI = {
     t("select_category"): [t("select_role")],
     "Đào": ["Đào chín", "Đào lệch", "Đào pha (ngang)"],
     "Kép": ["Kép chính", "Kép lệch", "Kép pha (ngang)"],
     "Hề": ["Hề áo trùng", "Hề áo ngắn"],
-    "Lão": ["Lão tướng", "Lão say", "Lão mốc", "Lão thiện", "Lão ác", "Lão bộc", "Lão chài", "Lão tiều"],
+    "Lão": ["Lão say", "Lão bộc", "Lão chài"],
     "Mụ": ["Mụ ác", "Mụ thiện", "Mụ mối"]
 }
+
+ROLE_CATEGORIES_EN = {
+    t("select_category"): [t("select_role")],
+    "Young women": ["Protagonist", "Antagonist", "Both protagonist and antagonist"],
+    "Young men": ["Protagonist", "Antagonist", "Both protagonist and antagonist"],
+    "Clowns": ["Wearing a long shirt", "Wearing a short shirt"],
+    "Elder men": ["Drunkard", "Slave","Fisherman"],
+    "Elder women": ["Good", "Evil", "Elder lady selling drinks"]
+}
+
+ROLE_CATEGORIES = ROLE_CATEGORIES_EN if LANG == "EN" else ROLE_CATEGORIES_VI
 
 ALL_MERGED_LABELS_EN = ["Happiness", "Anger", "Love", "Hatred", "Sadness", "Fear"]
 ALL_MERGED_LABELS_VI = ["Hỷ", "Nộ", "Ái", "Ố", "Ai", "Cụ"]
@@ -77,7 +88,7 @@ def resource_path(relative_path):
 def extract_trich_doan_name(folder_path):
     return os.path.basename(os.path.dirname(folder_path))
 
-output_root = resource_path('Output')
+output_root = resource_path('Output_final')
 datas = []
 for folder in os.listdir(output_root):
     folder_path = os.path.join(output_root, folder)
@@ -101,16 +112,16 @@ roles_output_path = os.path.join(os.getcwd(), 'roles_ver2.json')
 prev_votes = json.load(open(vote_output_path, 'r', encoding='utf-8')) if os.path.exists(vote_output_path) else []
 
 
-# Kiểm tra chạy đơn instance
-def ensure_single_instance(mutex_name="EmotionVoteAppMutex"):
-    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-    mutex = kernel32.CreateMutexW(None, wintypes.BOOL(True), wintypes.LPCWSTR(mutex_name))
-    if not mutex:
-        raise ctypes.WinError(ctypes.get_last_error())
-    ERROR_ALREADY_EXISTS = 183
-    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
-        print("Application already running, exiting...")
-        sys.exit(0)
+# # Kiểm tra chạy đơn instance
+# def ensure_single_instance(mutex_name="EmotionVoteAppMutex"):
+#     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+#     mutex = kernel32.CreateMutexW(None, wintypes.BOOL(True), wintypes.LPCWSTR(mutex_name))
+#     if not mutex:
+#         raise ctypes.WinError(ctypes.get_last_error())
+#     ERROR_ALREADY_EXISTS = 183
+#     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+#         print("Application already running, exiting...")
+#         sys.exit(0)
 
 
 class EmotionVoteApp(ctk.CTk):
@@ -225,6 +236,14 @@ class EmotionVoteApp(ctk.CTk):
             img = self.load_ctk_image(img_path)
             lbl.configure(image=img, text="" if img else t("image_not_found"))
             lbl.image = img
+        # --- Show first frame in frame player (onset) ---
+        onset_path = os.path.join(data['image_folder'], self.build_filename(data['onset_frame_id'], pid))
+        onset_img = self.load_ctk_image(onset_path)
+        if onset_img:
+            self.frame_image_label.configure(image=onset_img, text="")
+            self.frame_image_label.image = onset_img
+        else:
+            self.frame_image_label.configure(text=t("image_not_found"), image=None)
 
         # Handle EN <-> VI mapping for button highlighting
         external_vote = data.get('external_vote')
@@ -338,6 +357,44 @@ class EmotionVoteApp(ctk.CTk):
             btn.grid(row=0, column=len(button_dict), padx=self.scaled(5), pady=self.scaled(5))
             button_dict[label] = btn
 
+    def play_frames(self):
+        idx = self.index_order[self.index]
+        data = self.votes[idx]
+        pid = data['person_id']
+        folder = data['image_folder']
+
+        onset = data['onset_frame_id']
+        offset = data['offset_frame_id']
+
+        # collect all available frames between onset and offset
+        frame_ids = list(range(onset, offset + 1))
+        frame_paths = [
+            os.path.join(folder, self.build_filename(fid, pid))
+            for fid in frame_ids
+            if os.path.exists(os.path.join(folder, self.build_filename(fid, pid)))
+        ]
+
+        if not frame_paths:
+            self.frame_image_label.configure(text="No frames found", image=None)
+            return
+
+        self.current_play_idx = 0
+        self.play_sequence(frame_paths)
+
+    def play_sequence(self, frame_paths):
+        if self.current_play_idx >= len(frame_paths):
+            return  # end of animation
+
+        path = frame_paths[self.current_play_idx]
+        img = self.load_ctk_image(path)
+        if img:
+            self.frame_image_label.configure(image=img, text="")
+            self.frame_image_label.image = img
+
+        self.current_play_idx += 1
+        self.after(500, lambda: self.play_sequence(frame_paths))  # 500 ms per frame
+
+
     # ----- GUI layout -----
     def create_widgets(self):
         hdr = ctk.CTkFrame(self)
@@ -347,11 +404,36 @@ class EmotionVoteApp(ctk.CTk):
 
         imgf = ctk.CTkFrame(self)
         imgf.pack(pady=self.scaled(10))
+
         self.onset_img_label = ctk.CTkLabel(imgf)
         self.apex_img_label = ctk.CTkLabel(imgf)
         self.offset_img_label = ctk.CTkLabel(imgf)
         for i, lbl in enumerate([self.onset_img_label, self.apex_img_label, self.offset_img_label]):
             lbl.grid(row=0, column=i, padx=self.scaled(10))
+
+        # --- Frame Player ---
+        player_frame = ctk.CTkFrame(imgf)
+        player_frame.grid(row=0, column=3, padx=self.scaled(20), sticky="n")
+
+        ctk.CTkLabel(
+            player_frame,
+            text="Frame Player",
+            font=("Arial", self.scaled(FONT_SIZE))
+        ).pack(pady=(0, self.scaled(5)))
+
+        self.frame_image_label = ctk.CTkLabel(
+            player_frame,
+            text="(click Play to view frames)"
+        )
+        self.frame_image_label.pack()
+
+        self.play_button = ctk.CTkButton(
+            player_frame,
+            text="Play",
+            font=("Arial", self.scaled(FONT_SIZE)),
+            command=self.play_frames
+        )
+        self.play_button.pack(pady=self.scaled(5))
 
         rf = ctk.CTkFrame(self)
         rf.pack(pady=self.scaled(10))
@@ -377,7 +459,7 @@ class EmotionVoteApp(ctk.CTk):
         ctk.CTkButton(self, text=t("goto_first"), command=self.goto_first_unvoted, font=("Arial", self.scaled(FONT_SIZE))).pack(pady=self.scaled(10))
 
 if __name__ == "__main__":
-    ensure_single_instance()
+    # ensure_single_instance()
     ctk.set_appearance_mode("System")
     ctk.set_default_color_theme("blue")
     app = EmotionVoteApp()
